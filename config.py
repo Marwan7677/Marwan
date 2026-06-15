@@ -8,7 +8,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TOOBIT_API_KEY = os.getenv("TOOBIT_API_KEY")
 TOOBIT_SECRET_KEY = os.getenv("TOOBIT_SECRET_KEY")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite://data/toobit_bot.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:////data/toobit_bot.db")
 MERCHANT_ID = os.getenv("MERCHANT_ID", "")
 
 SUBSCRIPTION_TIERS = {
