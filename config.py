@@ -1,53 +1,187 @@
+"""
+تنظیمات ربات Toobit - نسخه PostgreSQL
+"""
+
 import os
 from dotenv import load_dotenv
-from datetime import timedelta
 
 load_dotenv()
 
+# ====================== توکن‌های Bot ======================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))
+
+# ====================== Toobit API ======================
 TOOBIT_API_KEY = os.getenv("TOOBIT_API_KEY")
 TOOBIT_SECRET_KEY = os.getenv("TOOBIT_SECRET_KEY")
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:////data/toobit_bot.db")
-MERCHANT_ID = os.getenv("MERCHANT_ID", "")
+TOOBIT_WS_URL = os.getenv("TOOBIT_WS_URL", "wss://stream.toobit.com/quote/ws/v1")
 
-SUBSCRIPTION_TIERS = {
-    "free": {"name": "رایگان", "fee_discount": 0, "max_daily_trades": 5, "signal_access": False},
-    "lite": {"name": "لایت", "fee_discount": 10, "max_daily_trades": 20, "signal_access": True},
-    "pro": {"name": "حرفه‌ای", "fee_discount": 25, "max_daily_trades": 100, "signal_access": True},
-    "gold": {"name": "طلایی", "fee_discount": 40, "max_daily_trades": 500, "signal_access": True},
-    "diamond": {"name": "الماس", "fee_discount": 60, "max_daily_trades": 9999, "signal_access": True},
+# ====================== PostgreSQL ======================
+# اولویت با متغیر محیطی، در غیر این صورت از اطلاعات پیش‌فرض (تصویر)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    DATABASE_URL = "postgresql://dbviewer:dbviewer@127.0.0.1:5432/appdb"
+
+# ====================== درگاه‌های پرداخت ======================
+ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "")
+PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
+PAYPAL_SECRET = os.getenv("PAYPAL_SECRET", "")
+
+# ====================== تنظیمات ربات ======================
+BOT_NAME = "Toobit Trade Bot"
+BOT_USERNAME = "toobittrade_bot"
+SUPPORT_CHAT_ID = int(os.getenv("SUPPORT_CHAT_ID", 0))
+
+# ====================== تنظیمات ترید ======================
+MIN_ORDER_AMOUNT = float(os.getenv("MIN_ORDER_AMOUNT", 10.0))
+MAX_ORDER_AMOUNT = float(os.getenv("MAX_ORDER_AMOUNT", 100000.0))
+DEFAULT_LEVERAGE = float(os.getenv("DEFAULT_LEVERAGE", 1.0))
+CACHE_DURATION = int(os.getenv("CACHE_DURATION", 30))
+
+# ====================== اعلانات ======================
+ENABLE_PRICE_ALERTS = os.getenv("ENABLE_PRICE_ALERTS", "true").lower() == "true"
+MAX_ALERTS_PER_USER = int(os.getenv("MAX_ALERTS_PER_USER", 20))
+
+# ====================== جفت‌ارزهای محبوب ======================
+POPULAR_PAIRS = [
+    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT',
+    'XRPUSDT', 'DOGEUSDT', 'LTCUSDT', 'UNIUSDT',
+    'LINKUSDT', 'SUSHIUSDT'
+]
+
+# ====================== تیرهای پیش‌فرض ======================
+TIER_CONFIG = {
+    'free': {
+        'price_monthly': 0,
+        'price_yearly': 0,
+        'max_daily_trades': 5,
+        'max_order_size': 50,
+        'min_order_size': 0.001,
+        'withdrawal_fee': 5.0,
+        'features': ['قیمت'],
+        'emoji': '🔹',
+        'description': 'رایگان'
+    },
+    'lite': {
+        'price_monthly': 50000,
+        'price_yearly': 500000,
+        'max_daily_trades': 20,
+        'max_order_size': 200,
+        'min_order_size': 0.001,
+        'withdrawal_fee': 3.0,
+        'features': ['قیمت', 'سفارش محدود', 'کیف پول'],
+        'emoji': '🥉',
+        'description': 'لایت'
+    },
+    'pro': {
+        'price_monthly': 150000,
+        'price_yearly': 1400000,
+        'max_daily_trades': 50,
+        'max_order_size': 500,
+        'min_order_size': 0.0001,
+        'withdrawal_fee': 2.0,
+        'features': ['قیمت', 'سفارش نامحدود', 'کیف پول', 'تاریخچه'],
+        'emoji': '🥈',
+        'description': 'پرو'
+    },
+    'professional': {
+        'price_monthly': 300000,
+        'price_yearly': 2800000,
+        'max_daily_trades': 200,
+        'max_order_size': 2000,
+        'min_order_size': 0.00001,
+        'withdrawal_fee': 1.5,
+        'features': ['همه', 'API', 'ربات', 'پشتیبانی VIP'],
+        'emoji': '🏆',
+        'description': 'حرفه‌ای'
+    },
+    'gold': {
+        'price_monthly': 500000,
+        'price_yearly': 4500000,
+        'max_daily_trades': 500,
+        'max_order_size': 5000,
+        'min_order_size': 0.000001,
+        'withdrawal_fee': 1.0,
+        'features': ['همه', 'API', 'ربات', 'پشتیبانی 24/7'],
+        'emoji': '⭐',
+        'description': 'طلایی'
+    },
+    'diamond': {
+        'price_monthly': 1000000,
+        'price_yearly': 9000000,
+        'max_daily_trades': -1,
+        'max_order_size': -1,
+        'min_order_size': 0,
+        'withdrawal_fee': 0.5,
+        'features': ['تمام امکانات', 'اولویت بالا', 'مشاور شخصی'],
+        'emoji': '💎',
+        'description': 'الماس'
+    }
 }
 
-SUBSCRIPTION_PRICES_USDT = {
-    "lite": 10,
-    "pro": 25,
-    "gold": 50,
-    "diamond": 100,
+# ====================== پیام‌های پیش‌فرض ======================
+MESSAGES = {
+    'welcome': '''🤖 خوش آمدید به ربات معاملاتی Toobit!
+
+سلام {user_name} 👋
+
+این ربات با **قیمت‌های لحظه‌ای** و **سیستم اعلانات** هوشمند در خدمت شماست.
+
+✅ معامله مستقیم با صرافی Toobit
+✅ مدیریت کیف‌پول شخصی
+✅ نمایش قیمت‌های لحظه‌ای
+✅ ثبت و لغو سفارشات
+✅ بهره‌برداری از پلان‌های حرفه‌ای''',
+    
+    'help': '''📖 راهنمای کامل
+
+**دستورات اصلی:**
+/start - منوی اصلی
+/help - راهنما
+/wallet - کیف‌پول
+/trading - مرکز ترید
+/prices - قیمت‌ها
+/subscription - اشتراک‌ها
+/alerts - مدیریت اعلانات
+
+**نکات مهم:**
+💡 برای محافظت از حساب، API key خود را شاه نگذارید
+💡 قبل از هر معامله، مبلغ و نماد را بررسی کنید
+💡 فقط اصلی‌ترین ارزهای دیجیتال را معامله کنید''',
+    
+    'error': '❌ خطا: {}',
+    'success': '✅ موفق: {}',
+    'info': 'ℹ️ اطلاعات: {}',
+    'warning': '⚠️ هشدار: {}',
 }
 
-BASE_FEE = 0.1  # 0.1%
-SUPPORTED_DEPOSIT_TOKENS = ["USDT", "TRX", "BTC", "ETH"]
+# ====================== توابع کمکی ======================
+def get_tier_config(tier_name: str) -> dict:
+    return TIER_CONFIG.get(tier_name, TIER_CONFIG['free'])
 
-PAIRS_CONFIG = {
-    "BTCUSDT": {"base": "BTC", "quote": "USDT", "min_qty": 0.00001, "step": 0.00001},
-    "BTCUSDC": {"base": "BTC", "quote": "USDC", "min_qty": 0.00001, "step": 0.00001},
-    "ETHUSDT": {"base": "ETH", "quote": "USDT", "min_qty": 0.001, "step": 0.001},
-    "APTUSDT": {"base": "APT", "quote": "USDT", "min_qty": 0.01, "step": 0.01},
-}
-DEFAULT_SYMBOL = "BTCUSDT"
-SYMBOLS_LIST = list(PAIRS_CONFIG.keys())
+def get_message(key: str, **kwargs) -> str:
+    msg = MESSAGES.get(key, "")
+    if kwargs:
+        msg = msg.format(**kwargs)
+    return msg
 
-def get_pair_config(symbol: str):
-    return PAIRS_CONFIG.get(symbol.upper())
+def validate_config():
+    errors = []
+    if not BOT_TOKEN:
+        errors.append("❌ BOT_TOKEN در فایل .env یافت نشد")
+    if not TOOBIT_API_KEY:
+        errors.append("❌ TOOBIT_API_KEY در فایل .env یافت نشد")
+    if not TOOBIT_SECRET_KEY:
+        errors.append("❌ TOOBIT_SECRET_KEY در فایل .env یافت نشد")
+    if not DATABASE_URL:
+        errors.append("❌ DATABASE_URL در فایل .env یافت نشد")
+    if errors:
+        print("\n".join(errors))
+        return False
+    return True
 
-def is_valid_symbol(symbol: str) -> bool:
-    return symbol.upper() in PAIRS_CONFIG
-
-def get_min_qty(symbol: str) -> float:
-    cfg = get_pair_config(symbol)
-    return cfg["min_qty"] if cfg else 0.0
-
-def get_step(symbol: str) -> float:
-    cfg = get_pair_config(symbol)
-    return cfg["step"] if cfg else 0.0
+if __name__ == "__main__":
+    if validate_config():
+        print("✅ تنظیمات صحیح است")
+    else:
+        print("❌ خطا در تنظیمات")
