@@ -23,7 +23,7 @@ PAYPAL_SECRET = os.getenv("PAYPAL_SECRET", "")
 
 # ====================== تنظیمات ربات ======================
 BOT_NAME = "Toobit Trade Bot"
-BOT_USERNAME = "toobittrade_bot"
+BOT_USERNAME = "tooobittradebot"
 SUPPORT_CHAT_ID = int(os.getenv("SUPPORT_CHAT_ID", 0))
 
 # ====================== تنظیمات ترید ======================
