@@ -1,364 +1,391 @@
 """
-سیستم مدیریت دیتابیس PostgreSQL با asyncpg
+سیستم مدیریت دیتابیس ربات Toobit
 """
 
-import asyncpg
-from typing import Optional, List, Dict, Any
+import sqlite3
+import json
 from datetime import datetime, timedelta
-import logging
-
-logger = logging.getLogger(__name__)
-
+from typing import Optional, List, Dict, Tuple
 
 class Database:
-    def __init__(self, dsn: str):
-        self.dsn = dsn
-        self.pool: Optional[asyncpg.Pool] = None
+    def __init__(self, db_path: str = "toobit_bot.db"):
+        self.db_path = db_path
+        self.init_tables()
 
-    async def init_pool(self):
-        """ایجاد connection pool و جداول"""
-        self.pool = await asyncpg.create_pool(
-            self.dsn,
-            min_size=1,
-            max_size=10,
-            command_timeout=60
-        )
-        await self._init_tables()
-        logger.info("✅ PostgreSQL connection pool created")
+    def get_connection(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-    async def _init_tables(self):
-        """ایجاد جداول با سینتکس PostgreSQL"""
-        async with self.pool.acquire() as conn:
-            # جدول کاربران
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    last_name TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    tier TEXT DEFAULT 'free',
-                    wallet_balance DECIMAL DEFAULT 0,
-                    total_spent DECIMAL DEFAULT 0,
-                    is_banned BOOLEAN DEFAULT FALSE,
-                    notification_enabled BOOLEAN DEFAULT TRUE,
-                    language TEXT DEFAULT 'fa'
-                )
-            ''')
+    def init_tables(self):
+        """ایجاد جداول دیتابیس"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
 
-            # جدول کیف‌پول
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS wallets (
-                    wallet_id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    currency TEXT NOT NULL,
-                    balance DECIMAL DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, currency)
-                )
-            ''')
-
-            # جدول تراکنش‌ها
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS transactions (
-                    transaction_id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    type TEXT NOT NULL,
-                    amount DECIMAL NOT NULL,
-                    currency TEXT DEFAULT 'USDT',
-                    status TEXT DEFAULT 'pending',
-                    description TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-
-            # جدول اشتراک‌ها
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS subscriptions (
-                    subscription_id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    tier TEXT NOT NULL,
-                    price DECIMAL NOT NULL,
-                    duration_days INTEGER DEFAULT 30,
-                    start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    end_date TIMESTAMP,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    auto_renew BOOLEAN DEFAULT FALSE
-                )
-            ''')
-
-            # جدول سفارشات
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS orders (
-                    order_id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    symbol TEXT NOT NULL,
-                    side TEXT NOT NULL,
-                    quantity DECIMAL NOT NULL,
-                    price DECIMAL NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    toobit_order_id TEXT UNIQUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    completed_at TIMESTAMP
-                )
-            ''')
-
-            # جدول پرداخت‌ها
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS payments (
-                    payment_id TEXT PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    amount DECIMAL NOT NULL,
-                    currency TEXT DEFAULT 'USDT',
-                    method TEXT NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    purpose TEXT,
-                    tier TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    expires_at TIMESTAMP,
-                    completed_at TIMESTAMP
-                )
-            ''')
-
-            # جدول تنظیمات تیرها
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS tier_config (
-                    tier_id SERIAL PRIMARY KEY,
-                    tier_name TEXT UNIQUE NOT NULL,
-                    price_monthly DECIMAL NOT NULL,
-                    price_yearly DECIMAL NOT NULL,
-                    max_daily_trades INTEGER DEFAULT 10,
-                    max_order_size DECIMAL DEFAULT 100,
-                    min_order_size DECIMAL DEFAULT 0.001,
-                    withdrawal_fee DECIMAL DEFAULT 2.0,
-                    features TEXT DEFAULT '{}',
-                    description TEXT,
-                    emoji TEXT DEFAULT '🔹'
-                )
-            ''')
-
-            # جدول اعلانات قیمت
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS price_alerts (
-                    alert_id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    symbol TEXT NOT NULL,
-                    target_price DECIMAL NOT NULL,
-                    direction TEXT CHECK (direction IN ('above', 'below')),
-                    is_active BOOLEAN DEFAULT TRUE,
-                    triggered_at TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-
-            await self._init_default_tiers(conn)
-
-    async def _init_default_tiers(self, conn):
-    from config import TIER_CONFIG  # import داخل تابع برای جلوگیری از circular
-    count = await conn.fetchval("SELECT COUNT(*) FROM tier_config")
-    if count == 0:
-        for tier_name, tier_data in TIER_CONFIG.items():
-            await conn.execute('''
-                INSERT INTO tier_config 
-                (tier_name, price_monthly, price_yearly, max_daily_trades, 
-                 max_order_size, min_order_size, withdrawal_fee, features, description, emoji)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ''', tier_name, tier_data['price_monthly'], tier_data['price_yearly'],
-               tier_data['max_daily_trades'], tier_data['max_order_size'],
-               tier_data['min_order_size'], tier_data['withdrawal_fee'],
-               str(tier_data['features']), tier_data.get('description', ''),
-               tier_data.get('emoji', '🔹'))
-
-    # ---------- کاربران ----------
-    async def add_user(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
-        async with self.pool.acquire() as conn:
-            try:
-                await conn.execute('''
-                    INSERT INTO users (user_id, username, first_name, last_name)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (user_id) DO NOTHING
-                ''', user_id, username, first_name, last_name)
-                for currency in ['USDT', 'USD', 'IRR']:
-                    await conn.execute('''
-                        INSERT INTO wallets (user_id, currency, balance)
-                        VALUES ($1, $2, 0)
-                        ON CONFLICT (user_id, currency) DO NOTHING
-                    ''', user_id, currency)
-                return True
-            except Exception as e:
-                logger.error(f"Error adding user: {e}")
-                return False
-
-    async def get_user(self, user_id: int) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
-            return dict(row) if row else None
-
-    async def update_user_tier(self, user_id: int, tier: str) -> bool:
-        async with self.pool.acquire() as conn:
-            result = await conn.execute(
-                "UPDATE users SET tier = $1 WHERE user_id = $2",
-                tier, user_id
+        # جدول کاربران
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                tier TEXT DEFAULT 'free',
+                wallet_balance REAL DEFAULT 0,
+                total_spent REAL DEFAULT 0,
+                is_banned BOOLEAN DEFAULT 0,
+                notification_enabled BOOLEAN DEFAULT 1,
+                language TEXT DEFAULT 'fa'
             )
-            return result != "UPDATE 0"
+        ''')
 
-    async def get_user_tier(self, user_id: int) -> str:
-        user = await self.get_user(user_id)
+        # جدول کیف‌پول
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS wallets (
+                wallet_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                currency TEXT NOT NULL,
+                balance REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(user_id),
+                UNIQUE(user_id, currency)
+            )
+        ''')
+
+        # جدول تاریخچه تراکنش‌ها
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                currency TEXT DEFAULT 'USDT',
+                status TEXT DEFAULT 'pending',
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(user_id)
+            )
+        ''')
+
+        # جدول اشتراک‌ها
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                subscription_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                tier TEXT NOT NULL,
+                price REAL NOT NULL,
+                duration_days INTEGER DEFAULT 30,
+                start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                end_date TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                auto_renew BOOLEAN DEFAULT 0,
+                FOREIGN KEY(user_id) REFERENCES users(user_id)
+            )
+        ''')
+
+        # جدول سفارشات
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                price REAL NOT NULL,
+                status TEXT DEFAULT 'pending',
+                toobit_order_id TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(user_id)
+            )
+        ''')
+
+        # جدول تنظیمات اشتراک‌ها
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tier_config (
+                tier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tier_name TEXT UNIQUE NOT NULL,
+                price_monthly REAL NOT NULL,
+                price_yearly REAL NOT NULL,
+                max_daily_trades INTEGER DEFAULT 10,
+                max_order_size REAL DEFAULT 100,
+                min_order_size REAL DEFAULT 0.001,
+                withdrawal_fee REAL DEFAULT 2.0,
+                features TEXT DEFAULT '{}',
+                description TEXT,
+                emoji TEXT DEFAULT '🔹'
+            )
+        ''')
+
+        conn.commit()
+        conn.close()
+
+    # ==================== کاربران ====================
+    def add_user(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
+        """افزودن کاربر جدید"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR IGNORE INTO users 
+                (user_id, username, first_name, last_name) 
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, username, first_name, last_name))
+            
+            # ایجاد کیف‌پول‌های پیش‌فرض
+            for currency in ['USDT', 'USD', 'IRR']:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO wallets (user_id, currency, balance)
+                    VALUES (?, ?, 0)
+                ''', (user_id, currency))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"خطا در افزودن کاربر: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_user(self, user_id: int) -> Optional[Dict]:
+        """دریافت اطلاعات کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def update_user_tier(self, user_id: int, tier: str) -> bool:
+        """بروزرسانی تیر کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                UPDATE users SET tier = ? WHERE user_id = ?
+            ''', (tier, user_id))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    def get_user_tier(self, user_id: int) -> str:
+        """دریافت تیر کاربر"""
+        user = self.get_user(user_id)
         return user['tier'] if user else 'free'
 
-    # ---------- کیف‌پول ----------
-    async def get_wallet_balance(self, user_id: int, currency: str = 'USDT') -> float:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT balance FROM wallets WHERE user_id = $1 AND currency = $2",
-                user_id, currency
-            )
-            return float(row['balance']) if row else 0.0
+    # ==================== کیف‌پول ====================
+    def get_wallet_balance(self, user_id: int, currency: str = 'USDT') -> float:
+        """دریافت موجودی کیف‌پول"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT balance FROM wallets 
+            WHERE user_id = ? AND currency = ?
+        ''', (user_id, currency))
+        row = cursor.fetchone()
+        conn.close()
+        return float(row['balance']) if row else 0.0
 
-    async def get_all_wallets(self, user_id: int) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT currency, balance FROM wallets WHERE user_id = $1 AND balance > 0 ORDER BY currency",
-                user_id
-            )
-            return [dict(row) for row in rows]
+    def get_all_wallets(self, user_id: int) -> List[Dict]:
+        """دریافت تمام کیف‌پول‌های کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT currency, balance FROM wallets 
+            WHERE user_id = ? AND balance > 0
+            ORDER BY currency
+        ''', (user_id,))
+        wallets = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return wallets
 
-    async def update_wallet_balance(self, user_id: int, currency: str, amount: float) -> bool:
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
+    def update_wallet_balance(self, user_id: int, currency: str, amount: float) -> bool:
+        """بروزرسانی موجودی کیف‌پول"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
                 UPDATE wallets 
-                SET balance = balance + $1, updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = $2 AND currency = $3
-            ''', amount, user_id, currency)
+                SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND currency = ?
+            ''', (amount, user_id, currency))
+            conn.commit()
             return True
+        finally:
+            conn.close()
 
-    # ---------- تراکنش‌ها ----------
-    async def add_transaction(self, user_id: int, type: str, amount: float,
-                              currency: str = 'USDT', status: str = 'completed',
-                              description: str = '') -> int:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow('''
-                INSERT INTO transactions (user_id, type, amount, currency, status, description)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING transaction_id
-            ''', user_id, type, amount, currency, status, description)
-            return row['transaction_id'] if row else 0
+    # ==================== تراکنش‌ها ====================
+    def add_transaction(self, user_id: int, type: str, amount: float, 
+                       currency: str = 'USDT', status: str = 'completed', 
+                       description: str = '') -> int:
+        """افزودن تراکنش"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO transactions 
+                (user_id, type, amount, currency, status, description)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, type, amount, currency, status, description))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
 
-    async def get_transactions(self, user_id: int, limit: int = 10) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT * FROM transactions 
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-            ''', user_id, limit)
-            return [dict(row) for row in rows]
+    def get_transactions(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """دریافت تاریخچه تراکنش‌ها"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM transactions 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        ''', (user_id, limit))
+        transactions = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return transactions
 
-    # ---------- اشتراک‌ها ----------
-    async def create_subscription(self, user_id: int, tier: str, price: float,
-                                  duration_days: int = 30, auto_renew: bool = False) -> int:
-        async with self.pool.acquire() as conn:
+    # ==================== اشتراک‌ها ====================
+    def create_subscription(self, user_id: int, tier: str, price: float, 
+                          duration_days: int = 30, auto_renew: bool = False) -> int:
+        """ایجاد اشتراک"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
             end_date = datetime.now() + timedelta(days=duration_days)
-            row = await conn.fetchrow('''
-                INSERT INTO subscriptions (user_id, tier, price, duration_days, end_date, auto_renew)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING subscription_id
-            ''', user_id, tier, price, duration_days, end_date, auto_renew)
-            await self.update_user_tier(user_id, tier)
-            return row['subscription_id'] if row else 0
+            cursor.execute('''
+                INSERT INTO subscriptions 
+                (user_id, tier, price, duration_days, end_date, auto_renew)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, tier, price, duration_days, end_date.isoformat(), auto_renew))
+            conn.commit()
+            
+            # بروزرسانی تیر کاربر
+            self.update_user_tier(user_id, tier)
+            
+            return cursor.lastrowid
+        finally:
+            conn.close()
 
-    async def get_active_subscription(self, user_id: int) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow('''
-                SELECT * FROM subscriptions 
-                WHERE user_id = $1 AND is_active = TRUE AND end_date > CURRENT_TIMESTAMP
-                ORDER BY end_date DESC
-                LIMIT 1
-            ''', user_id)
-            return dict(row) if row else None
+    def get_active_subscription(self, user_id: int) -> Optional[Dict]:
+        """دریافت اشتراک فعال"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM subscriptions 
+            WHERE user_id = ? AND is_active = 1 
+            AND end_date > CURRENT_TIMESTAMP
+            ORDER BY end_date DESC
+            LIMIT 1
+        ''', (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
 
-    # ---------- سفارشات ----------
-    async def add_order(self, user_id: int, symbol: str, side: str,
-                        quantity: float, price: float) -> int:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow('''
-                INSERT INTO orders (user_id, symbol, side, quantity, price)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING order_id
-            ''', user_id, symbol, side, quantity, price)
-            return row['order_id'] if row else 0
+    def renew_subscription(self, subscription_id: int, duration_days: int = 30) -> bool:
+        """تجدید اشتراک"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            end_date = datetime.now() + timedelta(days=duration_days)
+            cursor.execute('''
+                UPDATE subscriptions 
+                SET end_date = ?, is_active = 1
+                WHERE subscription_id = ?
+            ''', (end_date.isoformat(), subscription_id))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
 
-    async def get_user_orders(self, user_id: int, limit: int = 10) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT * FROM orders 
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-            ''', user_id, limit)
-            return [dict(row) for row in rows]
+    # ==================== سفارشات ====================
+    def add_order(self, user_id: int, symbol: str, side: str, 
+                 quantity: float, price: float) -> int:
+        """افزودن سفارش"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO orders 
+                (user_id, symbol, side, quantity, price)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, symbol, side, quantity, price))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
 
-    # ---------- تیرها ----------
-    async def get_tier_config(self, tier_name: str) -> Optional[Dict]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM tier_config WHERE tier_name = $1",
-                tier_name
-            )
-            return dict(row) if row else None
+    def get_user_orders(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """دریافت سفارشات کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM orders 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        ''', (user_id, limit))
+        orders = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return orders
 
-    async def get_all_tiers(self) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM tier_config ORDER BY price_monthly ASC")
-            return [dict(row) for row in rows]
+    # ==================== تیرها ====================
+    def init_tiers(self):
+        """راه‌اندازی اولیه تیرها"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        tiers = [
+            ('free', 0, 0, 5, 50, 0.001, 5.0, '["قیمت"]', '🔹 رایگان'),
+            ('lite', 50000, 500000, 20, 200, 0.001, 3.0, 
+             '["قیمت", "سفارش محدود", "کیف پول"]', '🥉 لایت'),
+            ('pro', 150000, 1400000, 50, 500, 0.0001, 2.0, 
+             '["قیمت", "سفارش نامحدود", "کیف پول", "تاریخچه"]', '🥈 پرو'),
+            ('professional', 300000, 2800000, 200, 2000, 0.00001, 1.5, 
+             '["همه", "API", "ربات", "پشتیبانی VIP"]', '🏆 حرفه‌ای'),
+            ('gold', 500000, 4500000, 500, 5000, 0.000001, 1.0, 
+             '["همه", "API", "ربات", "پشتیبانی 24/7"]', '⭐ طلایی'),
+            ('diamond', 1000000, 9000000, -1, -1, 0, 0.5, 
+             '["تمام امکانات", "اولویت بالا", "مشاور شخصی"]', '💎 الماس'),
+        ]
+        
+        for tier in tiers:
+            cursor.execute('''
+                INSERT OR REPLACE INTO tier_config 
+                (tier_name, price_monthly, price_yearly, max_daily_trades, 
+                 max_order_size, min_order_size, withdrawal_fee, features, description, emoji)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', tier)
+        
+        conn.commit()
+        conn.close()
 
-    # ---------- اعلانات قیمت ----------
-    async def add_price_alert(self, user_id: int, symbol: str, target_price: float, direction: str) -> int:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow('''
-                INSERT INTO price_alerts (user_id, symbol, target_price, direction)
-                VALUES ($1, $2, $3, $4)
-                RETURNING alert_id
-            ''', user_id, symbol, target_price, direction)
-            return row['alert_id'] if row else 0
+    def get_tier_config(self, tier_name: str) -> Optional[Dict]:
+        """دریافت تنظیمات تیر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM tier_config WHERE tier_name = ?
+        ''', (tier_name,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
 
-    async def get_active_alerts(self) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch('''
-                SELECT * FROM price_alerts 
-                WHERE is_active = TRUE AND triggered_at IS NULL
-            ''')
-            return [dict(row) for row in rows]
+    def get_all_tiers(self) -> List[Dict]:
+        """دریافت تمام تیرها"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM tier_config ORDER BY price_monthly ASC
+        ''')
+        tiers = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return tiers
 
-    async def trigger_alert(self, alert_id: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE price_alerts SET is_active = FALSE, triggered_at = CURRENT_TIMESTAMP WHERE alert_id = $1",
-                alert_id
-            )
 
-    async def get_user_alerts(self, user_id: int) -> List[Dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM price_alerts WHERE user_id = $1 ORDER BY created_at DESC",
-                user_id
-            )
-            return [dict(row) for row in rows]
-
-    # ---------- آمار سیستم ----------
-    async def get_system_stats(self) -> Dict:
-        async with self.pool.acquire() as conn:
-            total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-            new_users_today = await conn.fetchval("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE")
-            total_orders = await conn.fetchval("SELECT COUNT(*) FROM orders")
-            total_revenue = await conn.fetchval("SELECT COALESCE(SUM(price), 0) FROM subscriptions WHERE is_active = TRUE")
-            tier_dist = await conn.fetch("SELECT tier, COUNT(*) FROM users GROUP BY tier")
-            tier_distribution = {row[0]: row[1] for row in tier_dist}
-            return {
-                'total_users': total_users,
-                'new_users_today': new_users_today,
-                'total_orders': total_orders,
-                'total_revenue': float(total_revenue),
-                'tier_distribution': tier_distribution
-            }
+# ایجاد نمونه‌ی global
+db = Database()
+db.init_tiers()

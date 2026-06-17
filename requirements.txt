@@ -1,47 +1,53 @@
-# وابستگی‌های ربات معاملاتی Toobit - نسخه PostgreSQL
+# وابستگی‌های ربات معاملاتی Toobit
 
 # Telegram Bot Framework
-python-telegram-bot==20.8
+python-telegram-bot==20.7
+pyTelegramBotAPI==4.34.0
 
 # Toobit API
 toobit-api-python>=1.0.0
 
-# PostgreSQL
-asyncpg==0.29.0
-
-# WebSocket
-websockets==12.0
-
-# HTTP Client
-aiohttp==3.9.5
-requests==2.32.3
-
 # مدیریت متغیرهای محیطی
 python-dotenv==1.2.2
 
+# درخواست‌های HTTP
+requests==2.32.3
+aiohttp==3.9.2
+
 # پردازش داده‌ها
-pandas==2.2.0
-numpy==1.26.4
+pandas==2.1.4
+numpy==1.26.3
+
+# دیتابیس
+sqlalchemy==2.0.24
+pymongo==4.6.1
 
 # رمزنگاری
-cryptography==42.0.0
-pycryptodome==3.20.0
+cryptography==41.0.7
+pycryptodome==3.19.0
 
-# لاگینگ
+# AI/ML
+groq==1.4.0
+
+# لاگینگ و Monitoring
 python-json-logger==2.0.7
 
-# ابزارها
-pydantic==2.6.0
-python-dateutil==2.8.2
+# API ابزار‌ها
+pydantic==2.5.2
+
+# Async
 aiofiles==23.2.1
 
+# تاریخ و زمان
+python-dateutil==2.8.2
+
 # کیف پول و رمزنگاری
-web3==6.16.0
+web3==6.15.1
 
 # درگاه‌های پرداخت
 zarinpal==1.2.0
 paypalrestsdk==1.7.1
 
-# تست (اختیاری)
-pytest==8.0.0
-pytest-asyncio==0.23.5
+# Testing (اختیاری)
+pytest==7.4.3
+pytest-asyncio==0.23.2

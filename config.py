@@ -1,10 +1,11 @@
 """
-تنظیمات ربات Toobit - نسخه PostgreSQL
+تنظیمات ربات Toobit
 """
 
 import os
 from dotenv import load_dotenv
 
+# بارگذاری متغیرهای محیطی
 load_dotenv()
 
 # ====================== توکن‌های Bot ======================
@@ -14,13 +15,6 @@ ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))
 # ====================== Toobit API ======================
 TOOBIT_API_KEY = os.getenv("TOOBIT_API_KEY")
 TOOBIT_SECRET_KEY = os.getenv("TOOBIT_SECRET_KEY")
-TOOBIT_WS_URL = os.getenv("TOOBIT_WS_URL", "wss://stream.toobit.com/quote/ws/v1")
-
-# ====================== PostgreSQL ======================
-# اولویت با متغیر محیطی، در غیر این صورت از اطلاعات پیش‌فرض (تصویر)
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    DATABASE_URL = "postgresql://dbviewer:dbviewer@127.0.0.1:5432/appdb"
 
 # ====================== درگاه‌های پرداخت ======================
 ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID", "")
@@ -36,20 +30,25 @@ SUPPORT_CHAT_ID = int(os.getenv("SUPPORT_CHAT_ID", 0))
 MIN_ORDER_AMOUNT = float(os.getenv("MIN_ORDER_AMOUNT", 10.0))
 MAX_ORDER_AMOUNT = float(os.getenv("MAX_ORDER_AMOUNT", 100000.0))
 DEFAULT_LEVERAGE = float(os.getenv("DEFAULT_LEVERAGE", 1.0))
-CACHE_DURATION = int(os.getenv("CACHE_DURATION", 30))
 
-# ====================== اعلانات ======================
-ENABLE_PRICE_ALERTS = os.getenv("ENABLE_PRICE_ALERTS", "true").lower() == "true"
-MAX_ALERTS_PER_USER = int(os.getenv("MAX_ALERTS_PER_USER", 20))
+# ====================== فاصلهٔ زمانی برای کش کردن ======================
+CACHE_DURATION = int(os.getenv("CACHE_DURATION", 30))  # ثانیه
 
 # ====================== جفت‌ارزهای محبوب ======================
 POPULAR_PAIRS = [
-    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT',
-    'XRPUSDT', 'DOGEUSDT', 'LTCUSDT', 'UNIUSDT',
-    'LINKUSDT', 'SUSHIUSDT'
+    'BTCUSDT',
+    'ETHUSDT',
+    'BNBUSDT',
+    'ADAUSDT',
+    'XRPUSDT',
+    'DOGEUSDT',
+    'LTCUSDT',
+    'UNIUSDT',
+    'LINKUSDT',
+    'SUSHIUSDT',
 ]
 
-# ====================== تیرهای پیش‌فرض ======================
+# ====================== لایه‌های پیش‌فرض ======================
 TIER_CONFIG = {
     'free': {
         'price_monthly': 0,
@@ -59,8 +58,7 @@ TIER_CONFIG = {
         'min_order_size': 0.001,
         'withdrawal_fee': 5.0,
         'features': ['قیمت'],
-        'emoji': '🔹',
-        'description': 'رایگان'
+        'emoji': '🔹'
     },
     'lite': {
         'price_monthly': 50000,
@@ -70,8 +68,7 @@ TIER_CONFIG = {
         'min_order_size': 0.001,
         'withdrawal_fee': 3.0,
         'features': ['قیمت', 'سفارش محدود', 'کیف پول'],
-        'emoji': '🥉',
-        'description': 'لایت'
+        'emoji': '🥉'
     },
     'pro': {
         'price_monthly': 150000,
@@ -81,8 +78,7 @@ TIER_CONFIG = {
         'min_order_size': 0.0001,
         'withdrawal_fee': 2.0,
         'features': ['قیمت', 'سفارش نامحدود', 'کیف پول', 'تاریخچه'],
-        'emoji': '🥈',
-        'description': 'پرو'
+        'emoji': '🥈'
     },
     'professional': {
         'price_monthly': 300000,
@@ -92,8 +88,7 @@ TIER_CONFIG = {
         'min_order_size': 0.00001,
         'withdrawal_fee': 1.5,
         'features': ['همه', 'API', 'ربات', 'پشتیبانی VIP'],
-        'emoji': '🏆',
-        'description': 'حرفه‌ای'
+        'emoji': '🏆'
     },
     'gold': {
         'price_monthly': 500000,
@@ -103,19 +98,17 @@ TIER_CONFIG = {
         'min_order_size': 0.000001,
         'withdrawal_fee': 1.0,
         'features': ['همه', 'API', 'ربات', 'پشتیبانی 24/7'],
-        'emoji': '⭐',
-        'description': 'طلایی'
+        'emoji': '⭐'
     },
     'diamond': {
         'price_monthly': 1000000,
         'price_yearly': 9000000,
-        'max_daily_trades': -1,
-        'max_order_size': -1,
+        'max_daily_trades': -1,  # نامحدود
+        'max_order_size': -1,     # نامحدود
         'min_order_size': 0,
         'withdrawal_fee': 0.5,
         'features': ['تمام امکانات', 'اولویت بالا', 'مشاور شخصی'],
-        'emoji': '💎',
-        'description': 'الماس'
+        'emoji': '💎'
     }
 }
 
@@ -125,8 +118,7 @@ MESSAGES = {
 
 سلام {user_name} 👋
 
-این ربات با **قیمت‌های لحظه‌ای** و **سیستم اعلانات** هوشمند در خدمت شماست.
-
+این ربات به شما اجازه می‌دهد:
 ✅ معامله مستقیم با صرافی Toobit
 ✅ مدیریت کیف‌پول شخصی
 ✅ نمایش قیمت‌های لحظه‌ای
@@ -142,7 +134,6 @@ MESSAGES = {
 /trading - مرکز ترید
 /prices - قیمت‌ها
 /subscription - اشتراک‌ها
-/alerts - مدیریت اعلانات
 
 **نکات مهم:**
 💡 برای محافظت از حساب، API key خود را شاه نگذارید
@@ -155,31 +146,42 @@ MESSAGES = {
     'warning': '⚠️ هشدار: {}',
 }
 
-# ====================== توابع کمکی ======================
+# ====================== بررسی متغیرهای محیطی ======================
+def validate_config():
+    """بررسی تنظیمات"""
+    errors = []
+    
+    if not BOT_TOKEN:
+        errors.append("❌ BOT_TOKEN در فایل .env یافت نشد")
+    
+    if not TOOBIT_API_KEY:
+        errors.append("❌ TOOBIT_API_KEY در فایل .env یافت نشد")
+    
+    if not TOOBIT_SECRET_KEY:
+        errors.append("❌ TOOBIT_SECRET_KEY در فایل .env یافت نشد")
+    
+    if errors:
+        print("\n".join(errors))
+        return False
+    
+    return True
+
+
+# ====================== تابع کمکی ======================
 def get_tier_config(tier_name: str) -> dict:
+    """دریافت تنظیمات تیر"""
     return TIER_CONFIG.get(tier_name, TIER_CONFIG['free'])
 
+
 def get_message(key: str, **kwargs) -> str:
+    """دریافت پیام"""
     msg = MESSAGES.get(key, "")
     if kwargs:
         msg = msg.format(**kwargs)
     return msg
 
-def validate_config():
-    errors = []
-    if not BOT_TOKEN:
-        errors.append("❌ BOT_TOKEN در فایل .env یافت نشد")
-    if not TOOBIT_API_KEY:
-        errors.append("❌ TOOBIT_API_KEY در فایل .env یافت نشد")
-    if not TOOBIT_SECRET_KEY:
-        errors.append("❌ TOOBIT_SECRET_KEY در فایل .env یافت نشد")
-    if not DATABASE_URL:
-        errors.append("❌ DATABASE_URL در فایل .env یافت نشد")
-    if errors:
-        print("\n".join(errors))
-        return False
-    return True
 
+# اعتبارسنجی در زمان import
 if __name__ == "__main__":
     if validate_config():
         print("✅ تنظیمات صحیح است")
