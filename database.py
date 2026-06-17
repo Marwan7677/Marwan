@@ -1,5 +1,5 @@
 """
-سیستم مدیریت دیتابیس ربات Toobit
+سیستم مدیریت دیتابیس ربات Toobit - نسخهٔ اصلاح شدهٔ
 """
 
 import sqlite3
@@ -11,6 +11,7 @@ class Database:
     def __init__(self, db_path: str = "toobit_bot.db"):
         self.db_path = db_path
         self.init_tables()
+        self.init_tiers()  # ✅ اضافه شده
 
     def get_connection(self):
         conn = sqlite3.connect(self.db_path)
@@ -79,7 +80,6 @@ class Database:
                 start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 end_date TIMESTAMP,
                 is_active BOOLEAN DEFAULT 1,
-                auto_renew BOOLEAN DEFAULT 0,
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
             )
         ''')
@@ -101,7 +101,7 @@ class Database:
             )
         ''')
 
-        # جدول تنظیمات اشتراک‌ها
+        # جدول تنظیمات اشتراک‌ها - ✅ اصلاح شده
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tier_config (
                 tier_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,7 +113,7 @@ class Database:
                 min_order_size REAL DEFAULT 0.001,
                 withdrawal_fee REAL DEFAULT 2.0,
                 features TEXT DEFAULT '{}',
-                description TEXT,
+                description TEXT DEFAULT '',
                 emoji TEXT DEFAULT '🔹'
             )
         ''')
@@ -129,16 +129,30 @@ class Database:
         try:
             cursor.execute('''
                 INSERT OR IGNORE INTO users 
-                (user_id, username, first_name, last_name) 
+                (user_id, username, first_name, last_name)
                 VALUES (?, ?, ?, ?)
             ''', (user_id, username, first_name, last_name))
             
-            # ایجاد کیف‌پول‌های پیش‌فرض
-            for currency in ['USDT', 'USD', 'IRR']:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO wallets (user_id, currency, balance)
-                    VALUES (?, ?, 0)
-                ''', (user_id, currency))
+            # کیف‌پول پیش‌فرض (USDT)
+            cursor.execute('''
+                INSERT OR IGNORE INTO wallets 
+                (user_id, currency, balance)
+                VALUES (?, ?, 0)
+            ''', (user_id, 'USDT'))
+            
+            # کیف‌پول دوم (USD)
+            cursor.execute('''
+                INSERT OR IGNORE INTO wallets 
+                (user_id, currency, balance)
+                VALUES (?, ?, 0)
+            ''', (user_id, 'USD'))
+            
+            # کیف‌پول سوم (IRR)
+            cursor.execute('''
+                INSERT OR IGNORE INTO wallets 
+                (user_id, currency, balance)
+                VALUES (?, ?, 0)
+            ''', (user_id, 'IRR'))
             
             conn.commit()
             return True
@@ -188,21 +202,8 @@ class Database:
         conn.close()
         return float(row['balance']) if row else 0.0
 
-    def get_all_wallets(self, user_id: int) -> List[Dict]:
-        """دریافت تمام کیف‌پول‌های کاربر"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT currency, balance FROM wallets 
-            WHERE user_id = ? AND balance > 0
-            ORDER BY currency
-        ''', (user_id,))
-        wallets = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return wallets
-
-    def update_wallet_balance(self, user_id: int, currency: str, amount: float) -> bool:
-        """بروزرسانی موجودی کیف‌پول"""
+    def add_wallet_balance(self, user_id: int, amount: float, currency: str = 'USDT') -> bool:
+        """افزودن به موجودی کیف‌پول"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -216,26 +217,36 @@ class Database:
         finally:
             conn.close()
 
+    def get_all_wallets(self, user_id: int) -> List[Dict]:
+        """دریافت تمام کیف‌پول‌های کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM wallets WHERE user_id = ?
+        ''', (user_id,))
+        wallets = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return wallets
+
     # ==================== تراکنش‌ها ====================
-    def add_transaction(self, user_id: int, type: str, amount: float, 
-                       currency: str = 'USDT', status: str = 'completed', 
-                       description: str = '') -> int:
+    def add_transaction(self, user_id: int, tx_type: str, amount: float, 
+                       currency: str = 'USDT', description: str = '') -> bool:
         """افزودن تراکنش"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute('''
                 INSERT INTO transactions 
-                (user_id, type, amount, currency, status, description)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, type, amount, currency, status, description))
+                (user_id, type, amount, currency, description, status)
+                VALUES (?, ?, ?, ?, ?, 'completed')
+            ''', (user_id, tx_type, amount, currency, description))
             conn.commit()
-            return cursor.lastrowid
+            return True
         finally:
             conn.close()
 
-    def get_transactions(self, user_id: int, limit: int = 10) -> List[Dict]:
-        """دریافت تاریخچه تراکنش‌ها"""
+    def get_user_transactions(self, user_id: int, limit: int = 50) -> List[Dict]:
+        """دریافت تراکنش‌های کاربر"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
@@ -248,117 +259,75 @@ class Database:
         conn.close()
         return transactions
 
-    # ==================== اشتراک‌ها ====================
-    def create_subscription(self, user_id: int, tier: str, price: float, 
-                          duration_days: int = 30, auto_renew: bool = False) -> int:
-        """ایجاد اشتراک"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            end_date = datetime.now() + timedelta(days=duration_days)
-            cursor.execute('''
-                INSERT INTO subscriptions 
-                (user_id, tier, price, duration_days, end_date, auto_renew)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, tier, price, duration_days, end_date.isoformat(), auto_renew))
-            conn.commit()
-            
-            # بروزرسانی تیر کاربر
-            self.update_user_tier(user_id, tier)
-            
-            return cursor.lastrowid
-        finally:
-            conn.close()
-
-    def get_active_subscription(self, user_id: int) -> Optional[Dict]:
-        """دریافت اشتراک فعال"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM subscriptions 
-            WHERE user_id = ? AND is_active = 1 
-            AND end_date > CURRENT_TIMESTAMP
-            ORDER BY end_date DESC
-            LIMIT 1
-        ''', (user_id,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
-
-    def renew_subscription(self, subscription_id: int, duration_days: int = 30) -> bool:
-        """تجدید اشتراک"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            end_date = datetime.now() + timedelta(days=duration_days)
-            cursor.execute('''
-                UPDATE subscriptions 
-                SET end_date = ?, is_active = 1
-                WHERE subscription_id = ?
-            ''', (end_date.isoformat(), subscription_id))
-            conn.commit()
-            return True
-        finally:
-            conn.close()
-
     # ==================== سفارشات ====================
     def add_order(self, user_id: int, symbol: str, side: str, 
-                 quantity: float, price: float) -> int:
+                 quantity: float, price: float) -> bool:
         """افزودن سفارش"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute('''
                 INSERT INTO orders 
-                (user_id, symbol, side, quantity, price)
-                VALUES (?, ?, ?, ?, ?)
+                (user_id, symbol, side, quantity, price, status)
+                VALUES (?, ?, ?, ?, ?, 'pending')
             ''', (user_id, symbol, side, quantity, price))
             conn.commit()
-            return cursor.lastrowid
+            return True
         finally:
             conn.close()
 
-    def get_user_orders(self, user_id: int, limit: int = 10) -> List[Dict]:
+    def get_user_orders(self, user_id: int, status: str = 'pending', limit: int = 50) -> List[Dict]:
         """دریافت سفارشات کاربر"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
             SELECT * FROM orders 
-            WHERE user_id = ?
+            WHERE user_id = ? AND status = ?
             ORDER BY created_at DESC
             LIMIT ?
-        ''', (user_id, limit))
+        ''', (user_id, status, limit))
         orders = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return orders
 
-    # ==================== تیرها ====================
+    # ==================== تیرها - ✅ اصلاح شده ====================
     def init_tiers(self):
         """راه‌اندازی اولیه تیرها"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
+        # ✅ اصلاح شده: 10 مقدار برای 10 ستون
         tiers = [
-            ('free', 0, 0, 5, 50, 0.001, 5.0, '["قیمت"]', '🔹 رایگان'),
+            ('free', 0, 0, 5, 50, 0.001, 5.0, 
+             '["قیمت"]', '', '🔹'),
+            
             ('lite', 50000, 500000, 20, 200, 0.001, 3.0, 
-             '["قیمت", "سفارش محدود", "کیف پول"]', '🥉 لایت'),
+             '["قیمت", "سفارش محدود", "کیف پول"]', 'لایت', '🥉'),
+            
             ('pro', 150000, 1400000, 50, 500, 0.0001, 2.0, 
-             '["قیمت", "سفارش نامحدود", "کیف پول", "تاریخچه"]', '🥈 پرو'),
+             '["قیمت", "سفارش نامحدود", "کیف پول", "تاریخچه"]', 'پرو', '🥈'),
+            
             ('professional', 300000, 2800000, 200, 2000, 0.00001, 1.5, 
-             '["همه", "API", "ربات", "پشتیبانی VIP"]', '🏆 حرفه‌ای'),
+             '["همه", "API", "ربات", "پشتیبانی VIP"]', 'حرفه‌ای', '🏆'),
+            
             ('gold', 500000, 4500000, 500, 5000, 0.000001, 1.0, 
-             '["همه", "API", "ربات", "پشتیبانی 24/7"]', '⭐ طلایی'),
+             '["همه", "API", "ربات", "پشتیبانی 24/7"]', 'طلایی', '⭐'),
+            
             ('diamond', 1000000, 9000000, -1, -1, 0, 0.5, 
-             '["تمام امکانات", "اولویت بالا", "مشاور شخصی"]', '💎 الماس'),
+             '["تمام امکانات", "اولویت بالا", "مشاور شخصی"]', 'الماس', '💎'),
         ]
         
         for tier in tiers:
-            cursor.execute('''
-                INSERT OR REPLACE INTO tier_config 
-                (tier_name, price_monthly, price_yearly, max_daily_trades, 
-                 max_order_size, min_order_size, withdrawal_fee, features, description, emoji)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', tier)
+            try:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO tier_config 
+                    (tier_name, price_monthly, price_yearly, max_daily_trades, 
+                     max_order_size, min_order_size, withdrawal_fee, features, 
+                     description, emoji)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', tier)
+            except Exception as e:
+                print(f"خطا در درج {tier[0]}: {e}")
         
         conn.commit()
         conn.close()
@@ -385,7 +354,47 @@ class Database:
         conn.close()
         return tiers
 
+    # ==================== اشتراک‌ها ====================
+    def add_subscription(self, user_id: int, tier: str, price: float, 
+                        duration_days: int = 30) -> bool:
+        """افزودن اشتراک"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            end_date = datetime.now() + timedelta(days=duration_days)
+            cursor.execute('''
+                INSERT INTO subscriptions 
+                (user_id, tier, price, duration_days, start_date, end_date, is_active)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, 1)
+            ''', (user_id, tier, price, duration_days, end_date))
+            
+            # بروزرسانی تیر کاربر
+            cursor.execute('UPDATE users SET tier = ? WHERE user_id = ?', 
+                         (tier, user_id))
+            
+            conn.commit()
+            return True
+        finally:
+            conn.close()
 
-# ایجاد نمونه‌ی global
-db = Database()
-db.init_tiers()
+    def get_active_subscription(self, user_id: int) -> Optional[Dict]:
+        """دریافت اشتراک فعال کاربر"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM subscriptions 
+            WHERE user_id = ? AND is_active = 1 AND end_date > CURRENT_TIMESTAMP
+            ORDER BY start_date DESC LIMIT 1
+        ''', (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+
+# ایجاد نمونهٔ global - ✅ اصلاح شده
+try:
+    db = Database()
+    print("✅ دیتابیس مقداردهی شد")
+except Exception as e:
+    print(f"❌ خطا در مقداردهی دیتابیس: {e}")
+    raise
