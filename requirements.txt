@@ -19,9 +19,7 @@ pandas==2.1.4
 numpy==1.26.3
 
 # دیتابیس
-psycopg2-binary==2.9.9
-asyncpg==0.28.0
-sqlalchemy==2.0.24
+sqlite
 pymongo==4.6.1
 
 # رمزنگاری
